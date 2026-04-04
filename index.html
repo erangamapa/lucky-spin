@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lucky Spin Sic Bo</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="stage">
+  <div class="layer" id="bg-far"></div>
+  <div class="layer" id="bg-mid"></div>
+  <div class="layer" id="bg-near"></div>
+
+  <div id="dealer"></div>
+
+  <div id="table">
+    <div id="felt">
+      <div class="row" id="r-top"></div>
+      <div class="row" id="r-num"></div>
+      <div class="row" id="r-trip"></div>
+      <div class="row" id="r-bot"></div>
+    </div>
+  </div>
+
+  <div id="dome">
+    <div id="domebase"></div>
+    <div id="domeglass"></div>
+    <div id="dicewrap"></div>
+  </div>
+
+  <div id="hud">
+    <div class="pill" id="live"><span id="dot"></span> LIVE · LUCKY SPIN · <span id="clock">00:00</span></div>
+    <div class="pill" id="hist"></div>
+    <div class="pill" id="bal"><span>Balance</span><b id="balv">5,000</b></div>
+    <div class="pill" id="phase"><b id="pname">Connecting</b><small id="pmsg">joining table…</small><div id="bar"></div></div>
+  </div>
+  <div id="toast"></div>
+
+  <div id="rack">
+    <div id="staked"><span>On table</span><b id="stakev">0</b></div>
+    <div class="denom" data-v="10"  style="background:#2f6fd0">10</div>
+    <div class="denom sel" data-v="25" style="background:#1d8a4a">25</div>
+    <div class="denom" data-v="100" style="background:#8a1d2c">100</div>
+    <div class="denom" data-v="500" style="background:#5a2d8a">500</div>
+    <button id="undo" disabled>UNDO</button>
+  <button id="mute" title="Toggle sound">SOUND ON</button>
+  </div>
+
+  <div class="layer" id="scan"></div>
+  <div class="layer" id="vig"></div>
+</div>
+
+<script src="js/game.js"></script>
+</body>
+</html>
