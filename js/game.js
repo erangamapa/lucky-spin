@@ -336,6 +336,21 @@ const SFX=(()=>{
       bed.connect(bedF); bedF.connect(bedG); bedG.connect(ambient.bus);
       bed.start(); ambient.nodes.push(bed);
 
+      // the music track itself
+      try{
+        if(!ambient.buf){
+          const raw=atob(MUSIC_B64);
+          const bytes=new Uint8Array(raw.length);
+          for(let i=0;i<raw.length;i++) bytes[i]=raw.charCodeAt(i);
+          ambient.buf=await ctx.decodeAudioData(bytes.buffer);
+        }
+        if(!ambient.running) return;           // muted while decoding
+        const m=ctx.createBufferSource();
+        m.buffer=ambient.buf; m.loop=true;
+        const mg=ctx.createGain(); mg.gain.value=0.85;
+        m.connect(mg); mg.connect(ambient.bus);
+        m.start(); ambient.nodes.push(m);
+      }catch(e){ console.warn("music decode failed:",e); }
 
       // fade the whole bed in
       ambient.bus.gain.linearRampToValueAtTime(ambient.level,ctx.currentTime+2.5);
