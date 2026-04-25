@@ -541,7 +541,7 @@ function enter(i){
       flash("WIN  +"+fmt(payout));
     }
     else if(staked>0){ SFX.lose(); flash("NO WIN"); }
-    if(balance<10 && staked===0){ balance=1000; setTimeout(()=>flash("REBUY 1,000"),1400); sync(); }
+    if(balance<10 && staked===0){ balance=1000; setTimeout(()=>flash("REBUY 1,000"),1600); sync(); }
   }
 }
 function loop(now){
