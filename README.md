@@ -11,3 +11,7 @@ What it does
 - a looped music bed lives in js/music.js as base64 so the page also works from a local file
 
 The dealer is a single inline svg with css poses and a blink loop. Payouts follow the usual macau table, triples pay 180 to 1 and the totals scale from 60 to 1 at the edges down to 6 to 1 in the middle.
+
+How to run
+
+Open index.html in a browser, or serve the folder with any static server, for example python3 -m http.server and visit localhost:8000. Nothing to install. CI only checks that the scripts parse and that the files index.html points to exist, there are no gameplay tests.
