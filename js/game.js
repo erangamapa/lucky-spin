@@ -204,3 +204,347 @@ function settleDice(vals){
     d.style.transform=`rotateX(${rx+720}deg) rotateY(${ry+720}deg) rotateZ(0deg)`;
   });
 }
+
+/* ============ AUDIO ENGINE ============ */
+const SFX=(()=>{
+  let ctx=null, master=null, on=true, rattleTimer=null;
+  const ambient={running:false,bus:null,nodes:[],timer:null,level:0.5,buf:null};
+  const music={src:null,gain:null};   // reserved
+
+  function init(){
+    if(ctx) return ctx;
+    ctx=new (window.AudioContext||window.webkitAudioContext)();
+    master=ctx.createGain(); master.gain.value=0.55; master.connect(ctx.destination);
+    return ctx;
+  }
+  // browsers block audio until a gesture; resume on first interaction
+  function unlock(){ init(); if(ctx.state==="suspended") ctx.resume(); }
+
+  // shared noise buffer, cheap and reused by every percussive hit
+  let noiseBuf=null;
+  function noise(){
+    if(noiseBuf) return noiseBuf;
+    const n=ctx.sampleRate*0.5, b=ctx.createBuffer(1,n,ctx.sampleRate), d=b.getChannelData(0);
+    for(let i=0;i<n;i++) d[i]=Math.random()*2-1;
+    noiseBuf=b; return b;
+  }
+  // percussive hit: noise -> bandpass -> shaped gain
+  function hit({freq=1200,q=1,peak=0.5,dec=0.08,type="bandpass",dly=0}={}){
+    if(!on||!ctx) return;
+    const t=ctx.currentTime+dly;
+    const src=ctx.createBufferSource(); src.buffer=noise();
+    const f=ctx.createBiquadFilter(); f.type=type; f.frequency.value=freq; f.Q.value=q;
+    const g=ctx.createGain();
+    g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(peak,t+0.001);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dec);
+    src.connect(f); f.connect(g); g.connect(master);
+    src.start(t); src.stop(t+dec+0.02);
+  }
+  // pitched tone with ADSR
+  function tone({freq=440,peak=0.3,a=0.01,d=0.1,s=0.2,r=0.3,type="sine",dly=0,detune=0}={}){
+    if(!on||!ctx) return;
+    const t=ctx.currentTime+dly;
+    const o=ctx.createOscillator(); o.type=type; o.frequency.value=freq; o.detune.value=detune;
+    const g=ctx.createGain();
+    g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(peak,t+a);
+    g.gain.exponentialRampToValueAtTime(Math.max(peak*0.55,0.0001),t+a+d);
+    g.gain.setValueAtTime(Math.max(peak*0.55,0.0001),t+a+d+s);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+a+d+s+r);
+    o.connect(g); g.connect(master);
+    o.start(t); o.stop(t+a+d+s+r+0.05);
+  }
+
+  const API={
+    unlock,
+    toggle(){ on=!on; if(on) unlock(); return on; },
+    get enabled(){ return on; },
+
+    // clay chip landing on felt: two quick clicks, second softer
+    chip(){ hit({freq:2400,q:6,peak:0.45,dec:0.045});
+            hit({freq:1500,q:4,peak:0.22,dec:0.06,dly:0.025}); },
+    // chip lifted off the felt on undo
+    undo(){ hit({freq:1800,q:5,peak:0.2,dec:0.05});
+            tone({freq:520,peak:0.1,a:0.005,d:0.05,s:0,r:0.08,type:"triangle"}); },
+    // denomination select
+    click(){ hit({freq:3200,q:8,peak:0.18,dec:0.02}); },
+
+    // continuous dice rattle inside the dome
+    rattleStart(){
+      if(!on||!ctx) return;
+      const tick=()=>{
+        if(!on){ rattleTimer=null; return; }   // re-check each iteration
+        const n=1+Math.floor(Math.random()*2);
+        for(let i=0;i<n;i++)
+          hit({freq:900+Math.random()*2200,q:3+Math.random()*5,
+               peak:0.16+Math.random()*0.2,dec:0.03+Math.random()*0.03,
+               dly:Math.random()*0.05});
+        rattleTimer=setTimeout(tick,45+Math.random()*70);
+      };
+      tick();
+    },
+    rattleStop(){ clearTimeout(rattleTimer); rattleTimer=null; },
+    // dome motor spinning up
+    domeOn(){ tone({freq:70,peak:0.14,a:0.15,d:0.2,s:3.0,r:0.3,type:"sawtooth"}); },
+    // dice settling onto the base
+    settle(){ [0,0.06,0.13].forEach((d,i)=>
+      hit({freq:600+i*180,q:2,peak:0.4,dec:0.11,dly:d})); },
+
+    // betting window opens, bright two note
+    open(){ tone({freq:660,peak:0.22,a:0.01,d:0.08,s:0.05,r:0.18,type:"triangle"});
+            tone({freq:990,peak:0.18,a:0.01,d:0.08,s:0.05,r:0.22,type:"triangle",dly:0.11}); },
+    // betting closes, descending warn
+    close(){ tone({freq:520,peak:0.26,a:0.005,d:0.09,s:0.04,r:0.16,type:"square"});
+             tone({freq:390,peak:0.26,a:0.005,d:0.09,s:0.06,r:0.26,type:"square",dly:0.15}); },
+    // last five seconds urgency tick
+    tick(){ hit({freq:2600,q:10,peak:0.12,dec:0.02}); },
+
+    // win, detuned major triad with a slight arpeggio
+    win(){ [[523.25,0],[659.25,0.07],[783.99,0.14],[1046.5,0.21]].forEach(([f,d])=>{
+             tone({freq:f,peak:0.26,a:0.01,d:0.12,s:0.22,r:0.5,type:"triangle",dly:d});
+             tone({freq:f,peak:0.10,a:0.01,d:0.12,s:0.22,r:0.5,type:"sine",dly:d,detune:7}); }); },
+    // big win, longer and adds an octave shimmer
+    bigwin(){ API.win();
+      [[1046.5,0.3],[1318.5,0.38],[1568,0.46],[2093,0.54]].forEach(([f,d])=>
+        tone({freq:f,peak:0.16,a:0.01,d:0.1,s:0.3,r:0.7,type:"sine",dly:d})); },
+    // no win, soft muted fall
+    lose(){ tone({freq:330,peak:0.16,a:0.01,d:0.12,s:0.02,r:0.3,type:"sine"});
+            tone({freq:247,peak:0.14,a:0.01,d:0.14,s:0.03,r:0.4,type:"sine",dly:0.13}); },
+    // chips swept off the table
+    sweep(){ hit({freq:1100,q:1.2,peak:0.3,dec:0.35,type:"bandpass"});
+             hit({freq:700,q:0.8,peak:0.18,dec:0.4,type:"bandpass",dly:0.08}); },
+    // rejected action
+    deny(){ tone({freq:180,peak:0.24,a:0.004,d:0.06,s:0.02,r:0.1,type:"square"}); },
+
+    /* ---- BACKGROUND MUSIC BED ---- */
+    // the track lives in js/music.js as base64 so this works from file://
+    // where fetch would hit cors. decoded once, then looped.
+    // a low rumble layer sits underneath for room presence.
+    async ambientStart(){
+      if(!ctx||ambient.running) return;
+      ambient.running=true;
+      ambient.bus=ctx.createGain();
+      ambient.bus.gain.value=0;
+      ambient.bus.connect(master);
+
+      // low room rumble under the music
+      const bed=ctx.createBufferSource(); bed.buffer=noise(); bed.loop=true;
+      const bedF=ctx.createBiquadFilter(); bedF.type="lowpass";
+      bedF.frequency.value=140; bedF.Q.value=0.7;
+      const bedG=ctx.createGain(); bedG.gain.value=0.14;
+      bed.connect(bedF); bedF.connect(bedG); bedG.connect(ambient.bus);
+      bed.start(); ambient.nodes.push(bed);
+
+
+      // fade the whole bed in
+      ambient.bus.gain.linearRampToValueAtTime(ambient.level,ctx.currentTime+2.5);
+    },
+    ambientStop(){
+      if(!ambient.running) return;
+      ambient.running=false;
+      clearTimeout(ambient.timer); ambient.timer=null;
+      if(ambient.bus) ambient.bus.gain.linearRampToValueAtTime(0,ctx.currentTime+0.6);
+      const nodes=ambient.nodes.slice(); ambient.nodes=[];
+      setTimeout(()=>{ nodes.forEach(n=>{ try{n.stop();}catch(e){} }); },700);
+    },
+    // duck the ambient bed under the dice rattle / payout so they cut through
+    duck(amount=0.35,secs=0.4){
+      if(!ambient.bus||!ctx) return;
+      ambient.bus.gain.cancelScheduledValues(ctx.currentTime);
+      ambient.bus.gain.linearRampToValueAtTime(ambient.level*amount,ctx.currentTime+secs);
+    },
+    unduck(secs=1.2){
+      if(!ambient.bus||!ctx) return;
+      ambient.bus.gain.cancelScheduledValues(ctx.currentTime);
+      ambient.bus.gain.linearRampToValueAtTime(ambient.level,ctx.currentTime+secs);
+    },
+
+    /* to swap the bed, re-encode and replace the string in js/music.js
+         ffmpeg -i new.mp3 -t 60 -ac 1 -ar 32000 -b:a 40k out.mp3
+         base64 -w0 out.mp3                                        */
+    setMusicLevel(v){ ambient.level=Math.max(0,Math.min(1,v));
+      if(ambient.bus&&ctx) ambient.bus.gain.linearRampToValueAtTime(ambient.level,ctx.currentTime+0.3); }
+  };
+  return API;
+})();
+// unlock audio on the first gesture anywhere, then fade the room in
+["pointerdown","keydown"].forEach(e=>
+  window.addEventListener(e,()=>{ SFX.unlock(); SFX.ambientStart(); },{once:true}));
+
+/* ============ STATE ============ */
+let balance=5000, sel=25, bets={}, history=[], chipEls=[], lastAction=[];
+let locked=true;
+const balv=$("#balv"), stakev=$("#stakev"), feltEl=$("#felt");
+const fmt=n=>n.toLocaleString("en-US");
+function totalStake(){return Object.values(bets).reduce((a,b)=>a+b,0);}
+function sync(){
+  balv.textContent=fmt(balance);
+  stakev.textContent=fmt(totalStake());
+  $("#undo").disabled=locked||lastAction.length===0;
+}
+
+const CHIPCOL={10:"#2f6fd0",25:"#1d8a4a",100:"#8a1d2c",500:"#5a2d8a"};
+$$(".denom").forEach(d=>d.onclick=()=>{
+  $$(".denom").forEach(x=>x.classList.remove("sel"));
+  d.classList.add("sel"); sel=+d.dataset.v; SFX.click();
+});
+
+function flyChip(zoneEl,val){
+  const stage=$("#stage").getBoundingClientRect();
+  const from=$(".denom.sel").getBoundingClientRect();
+  const to=zoneEl.getBoundingClientRect();
+  const c=document.createElement("div"); c.className="chip fly";
+  c.style.background=CHIPCOL[val]; c.textContent=val;
+  c.style.left=(from.left-stage.left+from.width/2-15)+"px";
+  c.style.top=(from.top-stage.top+from.height/2-15)+"px";
+  $("#stage").appendChild(c); chipEls.push(c);
+  const dx=(to.left-from.left)+(to.width-from.width)/2;
+  const dy=(to.top-from.top)+(to.height-from.height)/2;
+  requestAnimationFrame(()=>{ c.style.transform=`translate(${dx}px,${dy}px) scale(.9)`; });
+  return c;
+}
+
+$$(".zone").forEach(z=>{
+  z.onclick=()=>{
+    if(locked){ SFX.deny(); return; }
+    if(balance<sel){ SFX.deny(); flash("INSUFFICIENT BALANCE"); return; }
+    const key=ALIAS[z.dataset.id]||z.dataset.id;
+    balance-=sel; bets[key]=(bets[key]||0)+sel;
+    const c=flyChip(z,sel);
+    // chip lands at the end of its flight, not on click
+    setTimeout(()=>SFX.chip(),480);
+    lastAction.push({key,val:sel,el:c});
+    sync();
+  };
+});
+$("#undo").onclick=()=>{
+  if(locked||!lastAction.length){ SFX.deny(); return; }
+  SFX.undo();
+  const a=lastAction.pop();
+  bets[a.key]-=a.val; if(bets[a.key]<=0) delete bets[a.key];
+  balance+=a.val; a.el.style.opacity="0";
+  setTimeout(()=>a.el.remove(),400);
+  chipEls=chipEls.filter(e=>e!==a.el);
+  sync();
+};
+$("#mute").onclick=()=>{
+  const on=SFX.toggle();
+  $("#mute").textContent = on ? "SOUND ON" : "SOUND OFF";
+  $("#mute").classList.toggle("off",!on);
+  if(!on){ SFX.rattleStop(); SFX.ambientStop(); }
+  else SFX.ambientStart();
+};
+
+function clearChips(){ chipEls.forEach(c=>{c.style.opacity="0";setTimeout(()=>c.remove(),450)}); chipEls=[]; }
+function flash(t){ const el=$("#toast"); el.textContent=t;
+  el.classList.remove("on"); void el.offsetWidth; el.classList.add("on"); }
+
+/* ============ SETTLEMENT ============ */
+function settle(v){
+  const sum=v[0]+v[1]+v[2];
+  const trip=v[0]===v[1]&&v[1]===v[2];
+  const won={};
+  const add=(k)=>{ if(bets[k]) won[k]=bets[k]*(PAY[k.startsWith("t")?+k.slice(1):k]||0); };
+  if(!trip){
+    if(sum>=4&&sum<=10&&bets.small) won.small=bets.small*PAY.small;
+    if(sum>=11&&sum<=17&&bets.big) won.big=bets.big*PAY.big;
+    if(sum%2===1&&bets.odd) won.odd=bets.odd*PAY.odd;
+    if(sum%2===0&&bets.even) won.even=bets.even*PAY.even;
+  }
+  const tk="t"+sum;
+  if(bets[tk]) won[tk]=bets[tk]*PAY[sum];
+  if(trip){
+    if(bets.any3) won.any3=bets.any3*PAY.any3;
+    const sk="s"+v[0];
+    if(bets[sk]) won[sk]=bets[sk]*PAY.spec3;
+  }
+  let payout=0;
+  for(const k in won){ payout += won[k] + bets[k]; }   // winnings + returned stake
+  return {sum,trip,won,payout};
+}
+function highlight(keys){
+  $$(".zone").forEach(z=>{
+    const k=ALIAS[z.dataset.id]||z.dataset.id;
+    if(keys.includes(k)) z.classList.add("win");
+  });
+  setTimeout(()=>$$(".zone").forEach(z=>z.classList.remove("win")),4400);
+}
+function pushHistory(sum,trip){
+  history.unshift({sum,trip}); history=history.slice(0,10);
+  $("#hist").innerHTML=history.map(h=>
+    `<div class="hchip ${h.trip?"t":(h.sum<=10?"s":"b")}">${h.sum}</div>`).join("");
+}
+
+/* ============ ROUND FSM ============ */
+const PHASES=[
+  {n:"BETTING",   ms:20000, msg:"Place your bets",        pose:"open",  lock:false},
+  {n:"NO MORE BETS",ms:2200, msg:"Betting is closed",     pose:"stop",  lock:true},
+  {n:"SHAKING",   ms:3600,  msg:"Rolling the dice",       pose:"rest",  lock:true},
+  {n:"RESULT",    ms:1600,  msg:"Reading the dice",       pose:"point", lock:true},
+  {n:"PAYOUT",    ms:4200,  msg:"Settling the table",     pose:"open",  lock:true},
+];
+let pi=0, tstart=0, roll=null, res=null, lastTick=-1;
+const pname=$("#pname"), pmsg=$("#pmsg"), bar=$("#bar");
+
+function enter(i){
+  pi=i; const p=PHASES[i]; tstart=performance.now();
+  pname.textContent=p.n; pmsg.textContent=p.msg;
+  locked=p.lock; feltEl.classList.toggle("locked",locked);
+  pose(p.pose); smile(p.n==="BETTING"||p.n==="PAYOUT");
+  sync();
+
+  if(p.n==="BETTING"){
+    if(chipEls.length) SFX.sweep();
+    clearChips(); bets={}; lastAction=[]; sync();
+    SFX.open(); SFX.unduck(1.5);
+  }
+  if(p.n==="NO MORE BETS"){ SFX.close(); flash("NO MORE BETS"); }
+  if(p.n==="SHAKING"){
+    $("#dome").classList.add("shake"); startTumble();
+    SFX.domeOn(); SFX.rattleStart(); SFX.duck(0.3,0.5);
+  }
+  if(p.n==="RESULT"){
+    $("#dome").classList.remove("shake");
+    SFX.rattleStop(); SFX.settle();
+    roll=[1,2,3].map(()=>1+Math.floor(Math.random()*6));
+    settleDice(roll);
+    res=settle(roll);
+  }
+  if(p.n==="PAYOUT"){
+    const {sum,trip,won,payout}=res;
+    pushHistory(sum,trip);
+    const keys=Object.keys(won);
+    if(keys.length) highlight(keys);
+    balance+=payout; sync();
+    const staked=totalStake();
+    const net=payout-staked;
+    pmsg.textContent = `Total ${sum} · ${trip?"TRIPLE":(sum<=10?"SMALL":"BIG")} · ${sum%2?"ODD":"EVEN"}`;
+    if(payout>0){
+      // 5x the stake or better gets the extended fanfare
+      if(payout >= staked*5) SFX.bigwin(); else SFX.win();
+      flash("WIN  +"+fmt(payout));
+    }
+    else if(staked>0){ SFX.lose(); flash("NO WIN"); }
+    if(balance<10 && staked===0){ balance=1000; setTimeout(()=>flash("REBUY 1,000"),1400); sync(); }
+  }
+}
+function loop(now){
+  const p=PHASES[pi], el=now-tstart, f=Math.min(el/p.ms,1);
+  bar.style.transform=`scaleX(${p.n==="BETTING"?1-f:f})`;
+  bar.style.background = (p.n==="BETTING" && f>.72) ? "#ff3b46" : "var(--gold)";
+  if(p.n==="BETTING"){
+    const left=Math.ceil((p.ms-el)/1000);
+    pmsg.textContent=`Place your bets ${left}s`;
+    // gate to one tick per second, only in the last 5
+    if(left<=5 && left>0 && left!==lastTick){ lastTick=left; SFX.tick(); }
+  }
+  if(f>=1){ lastTick=-1; enter((pi+1)%PHASES.length); }
+  requestAnimationFrame(loop);
+}
+// stream clock
+let t0=Date.now();
+setInterval(()=>{ const s=Math.floor((Date.now()-t0)/1000);
+  $("#clock").textContent=String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0"); },1000);
+
+sync(); enter(0); requestAnimationFrame(loop);
